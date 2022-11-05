@@ -322,7 +322,7 @@ class AGAC(ActorCriticRLModel):
         return policy_loss, value_loss, policy_entropy, approxkl, clipfrac
 
     def learn(self, total_timesteps, callback=None, log_interval=1, tb_log_name="PPO2",
-              reset_num_timesteps=True):
+              reset_num_timesteps=True, save_interval=10000000, model_save_path=None):
         # Transform to callable if needed
         self.learning_rate = get_schedule_fn(self.learning_rate)
         self.agac_c = get_schedule_fn(self.agac_c)
@@ -338,7 +338,7 @@ class AGAC(ActorCriticRLModel):
 
             t_first_start = time.time()
             n_updates = total_timesteps // self.n_batch
-
+            save_on = save_interval
             callback.on_training_start(locals(), globals())
 
             for update in range(1, n_updates + 1):
@@ -429,6 +429,10 @@ class AGAC(ActorCriticRLModel):
                     for (loss_val, loss_name) in zip(loss_vals, self.loss_names):
                         logger.logkv(loss_name, loss_val)
                     logger.dumpkvs()
+
+                if self.num_timesteps > save_on:
+                    self.save(model_save_path + f"/ts_{self.num_timesteps}")
+                    save_on += save_interval
 
             callback.on_training_end()
             return self
