@@ -18,7 +18,7 @@ class AGAC(ActorCriticRLModel):
                  vf_coef=0.5, max_grad_norm=0.5, lam=0.95, nminibatches=4, noptepochs=4, cliprange=0.2,
                  agac_c=0.01, beta_adv=0.1, episodic_count=True,
                  verbose=0, tensorboard_log=None, full_tensorboard_log=False, _init_setup_model=True,
-                 policy_kwargs=None, seed=None, n_cpu_tf_sess=None):
+                 policy_kwargs=None, seed=None, n_cpu_tf_sess=None, rnd_noise=False, add_noise=False):
 
         self.learning_rate = learning_rate
         self.cliprange = cliprange
@@ -35,6 +35,8 @@ class AGAC(ActorCriticRLModel):
         self.tensorboard_log = tensorboard_log
         self.full_tensorboard_log = full_tensorboard_log
         self.episodic_count = episodic_count
+        self.rnd_noise = rnd_noise
+        self.add_noise = add_noise
 
         self.action_ph = None
         self.advs_ph = None
@@ -359,6 +361,16 @@ class AGAC(ActorCriticRLModel):
                 rollout = self.runner.run(callback)
                 # Unpack
                 obs, returns, true_returns, masks, actions, values, neglogpacs, pi_probas, pi_adv_logits, states, ep_infos, undiscounted_reward = rollout
+
+                if self.rnd_noise:
+                    noise = np.random.uniform(-0.001, 0.001, size=pi_adv_logits.shape)
+                    if self.add_noise:
+                        print("add noise")
+                        pi_adv_logits += noise
+                    else:
+                        print("replace noise")
+                        pi_adv_logits = noise
+
                 callback.on_rollout_end()
 
                 # Early stopping due to the callback
