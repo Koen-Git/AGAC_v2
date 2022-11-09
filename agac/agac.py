@@ -113,6 +113,8 @@ class AGAC(ActorCriticRLModel):
                     self.old_pi_probas_ph = tf.compat.v1.placeholder(tf.float32, [None, None], name="old_pi_probas_ph")
                     self.old_pi_adv_logits_ph = tf.compat.v1.placeholder(tf.float32, [None, None],
                                                                          name="old_pi_adv_logits_ph")
+                    self.pi_rnd_adv_logits_ph = tf.compat.v1.placeholder(tf.float32, [None, None],
+                                                                         name="old_pi_rnd_adv_logits_ph")
                     self.old_vpred_ph = tf.compat.v1.placeholder(tf.float32, [None], name="old_vpred_ph")
                     self.learning_rate_ph = tf.compat.v1.placeholder(tf.float32, [], name="learning_rate_ph")
                     self.agac_c_ph = tf.compat.v1.placeholder(tf.float32, [], name="agac_c_ph")
@@ -135,14 +137,22 @@ class AGAC(ActorCriticRLModel):
                         logits=self.old_pi_adv_logits_ph,
                         labels=tf.one_hot(tf.stop_gradient(self.action_ph),
                                           train_model.pi_adv_logits.get_shape().as_list()[-1]))
+                    self.old_pi_rnd_adv_neglogpac = tf.nn.softmax_cross_entropy_with_logits(
+                        logits=self.pi_rnd_adv_logits_ph,
+                        labels=tf.one_hot(tf.stop_gradient(self.action_ph),
+                                          train_model.pi_adv_logits.get_shape().as_list()[-1])) # only uses shape, so no need to differentiate between old and new rnd_adv_logits
 
                     old_pi_softmax = self.old_pi_probas_ph
                     pi_adv_softmax = tf.nn.softmax(train_model.pi_adv_logits)
                     old_pi_adv_softmax = tf.nn.softmax(self.old_pi_adv_logits_ph)
+                    pi_rnd_adv_softmax = tf.nn.softmax(self.pi_rnd_adv_logits_ph)
 
                     # KL
                     pi_piadv_kl = tf.stop_gradient(
                         tf.reduce_sum(input_tensor=old_pi_softmax * tf.math.log(old_pi_softmax / (old_pi_adv_softmax + 1e-8) + 1e-8),
+                                      axis=-1))
+                    pi_pi_rnd_adv_kl = tf.stop_gradient(
+                        tf.reduce_sum(input_tensor=old_pi_softmax * tf.math.log(old_pi_softmax / (pi_rnd_adv_softmax + 1e-8) + 1e-8),
                                       axis=-1))
 
                     # Adversary loss
@@ -151,16 +161,16 @@ class AGAC(ActorCriticRLModel):
 
                     # Value function loss
                     vf_losses1 = tf.square(
-                        vpred - self.true_rewards_ph - self.agac_c_ph * pi_piadv_kl)
+                        vpred - self.true_rewards_ph - self.agac_c_ph * pi_piadv_kl - self.agac_c_ph * pi_pi_rnd_adv_kl)
                     vf_losses2 = tf.square(
-                        vpred_clipped - self.true_rewards_ph - self.agac_c_ph * pi_piadv_kl)
+                        vpred_clipped - self.true_rewards_ph - self.agac_c_ph * pi_piadv_kl - self.agac_c_ph * pi_pi_rnd_adv_kl)
                     self.vf_loss = .5 * tf.reduce_mean(input_tensor=tf.maximum(vf_losses1, vf_losses2))
 
                     # Policy loss
                     ratio = tf.exp(self.old_pi_neglogpac_ph - neglogpac)
 
                     agac_advs_ph = self.rewards_ph + self.agac_c_ph * tf.stop_gradient(
-                        (self.old_pi_adv_neglogpac - self.old_pi_neglogpac_ph)) - self.old_vpred_ph
+                        (self.old_pi_adv_neglogpac - self.old_pi_neglogpac_ph - self.old_pi_rnd_adv_neglogpac)) - self.old_vpred_ph
                     mean_adv, var_adv = tf.nn.moments(x=agac_advs_ph, axes=0)
                     agac_advs_ph = (agac_advs_ph - mean_adv) / (tf.math.sqrt(var_adv) + 1e-8)
 
@@ -256,7 +266,7 @@ class AGAC(ActorCriticRLModel):
                 self.summary = tf.compat.v1.summary.merge_all()
 
     def _train_step(self, learning_rate, agac_c_now, cliprange, obs, returns, true_returns, masks, actions, values,
-                    neglogpacs, pi_probas, pi_adv_logits, update, writer, states=None, cliprange_vf=None):
+                    neglogpacs, pi_probas, pi_adv_logits, pi_rnd_adv_logits, update, writer, states=None, cliprange_vf=None):
         """
         Training of Algorithm
 
@@ -275,6 +285,7 @@ class AGAC(ActorCriticRLModel):
                 approximation of kl divergence, updated clipping range, training update operation
         :param cliprange_vf: (float) Clipping factor for the value function
         """
+
         advs = returns - values
         advs = (advs - advs.mean()) / (advs.std() + 1e-8)
 
@@ -285,7 +296,8 @@ class AGAC(ActorCriticRLModel):
                   self.old_pi_neglogpac_ph: neglogpacs, self.old_vpred_ph: values,
                   self.true_rewards_ph: true_returns,
                   self.old_pi_probas_ph: pi_probas,
-                  self.old_pi_adv_logits_ph: pi_adv_logits
+                  self.old_pi_adv_logits_ph: pi_adv_logits,
+                  self.pi_rnd_adv_logits_ph: pi_rnd_adv_logits
                   }
 
         if states is not None:
@@ -361,6 +373,7 @@ class AGAC(ActorCriticRLModel):
                 rollout = self.runner.run(callback)
                 # Unpack
                 obs, returns, true_returns, masks, actions, values, neglogpacs, pi_probas, pi_adv_logits, states, ep_infos, undiscounted_reward = rollout
+                pi_rnd_adv_logits = np.random.uniform(size=pi_adv_logits.shape)
 
                 if self.rnd_noise:
                     noise = np.random.uniform(-0.001, 0.001, size=pi_adv_logits.shape)
@@ -391,7 +404,7 @@ class AGAC(ActorCriticRLModel):
                             mbinds = inds[start:end]
                             slices = (arr[mbinds] for arr in (
                                 obs, returns, true_returns, masks, actions, values, neglogpacs, pi_probas,
-                                pi_adv_logits))
+                                pi_adv_logits, pi_rnd_adv_logits))
                             mb_loss_vals.append(
                                 self._train_step(lr_now, agac_c_now, cliprange_now, *slices, writer=writer,
                                                  update=timestep, cliprange_vf=cliprange_vf_now))
