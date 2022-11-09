@@ -18,7 +18,7 @@ class AGAC(ActorCriticRLModel):
                  vf_coef=0.5, max_grad_norm=0.5, lam=0.95, nminibatches=4, noptepochs=4, cliprange=0.2,
                  agac_c=0.01, beta_adv=0.1, episodic_count=True,
                  verbose=0, tensorboard_log=None, full_tensorboard_log=False, _init_setup_model=True,
-                 policy_kwargs=None, seed=None, n_cpu_tf_sess=None, rnd_noise=False, add_noise=False):
+                 policy_kwargs=None, seed=None, n_cpu_tf_sess=None, rnd_adv=False, rnd_noise=False, add_noise=False):
 
         self.learning_rate = learning_rate
         self.cliprange = cliprange
@@ -35,6 +35,7 @@ class AGAC(ActorCriticRLModel):
         self.tensorboard_log = tensorboard_log
         self.full_tensorboard_log = full_tensorboard_log
         self.episodic_count = episodic_count
+        self.rnd_adv = rnd_adv
         self.rnd_noise = rnd_noise
         self.add_noise = add_noise
 
@@ -137,40 +138,54 @@ class AGAC(ActorCriticRLModel):
                         logits=self.old_pi_adv_logits_ph,
                         labels=tf.one_hot(tf.stop_gradient(self.action_ph),
                                           train_model.pi_adv_logits.get_shape().as_list()[-1]))
-                    self.old_pi_rnd_adv_neglogpac = tf.nn.softmax_cross_entropy_with_logits(
-                        logits=self.pi_rnd_adv_logits_ph,
-                        labels=tf.one_hot(tf.stop_gradient(self.action_ph),
-                                          train_model.pi_adv_logits.get_shape().as_list()[-1])) # only uses shape, so no need to differentiate between old and new rnd_adv_logits
+                    if self.rnd_adv:
+                        self.old_pi_rnd_adv_neglogpac = tf.nn.softmax_cross_entropy_with_logits(
+                            logits=self.pi_rnd_adv_logits_ph,
+                            labels=tf.one_hot(tf.stop_gradient(self.action_ph),
+                                            train_model.pi_adv_logits.get_shape().as_list()[-1])) # only uses shape, so no need to differentiate between old and new rnd_adv_logits
 
                     old_pi_softmax = self.old_pi_probas_ph
                     pi_adv_softmax = tf.nn.softmax(train_model.pi_adv_logits)
                     old_pi_adv_softmax = tf.nn.softmax(self.old_pi_adv_logits_ph)
-                    pi_rnd_adv_softmax = tf.nn.softmax(self.pi_rnd_adv_logits_ph)
+                    if self.rnd_adv:
+                        pi_rnd_adv_softmax = tf.nn.softmax(self.pi_rnd_adv_logits_ph)
 
                     # KL
                     pi_piadv_kl = tf.stop_gradient(
                         tf.reduce_sum(input_tensor=old_pi_softmax * tf.math.log(old_pi_softmax / (old_pi_adv_softmax + 1e-8) + 1e-8),
                                       axis=-1))
-                    pi_pi_rnd_adv_kl = tf.stop_gradient(
-                        tf.reduce_sum(input_tensor=old_pi_softmax * tf.math.log(old_pi_softmax / (pi_rnd_adv_softmax + 1e-8) + 1e-8),
-                                      axis=-1))
+                    if self.rnd_adv:
+                        pi_pi_rnd_adv_kl = tf.stop_gradient(
+                            tf.reduce_sum(input_tensor=old_pi_softmax * tf.math.log(old_pi_softmax / (pi_rnd_adv_softmax + 1e-8) + 1e-8),
+                                        axis=-1))
 
                     # Adversary loss
                     l_adv = tf.reduce_sum(input_tensor=tf.stop_gradient(old_pi_softmax) * tf.math.log(
                         tf.stop_gradient(old_pi_softmax) / (pi_adv_softmax + 1e-8) + 1e-8), axis=-1)
 
                     # Value function loss
-                    vf_losses1 = tf.square(
-                        vpred - self.true_rewards_ph - self.agac_c_ph * pi_piadv_kl - self.agac_c_ph * pi_pi_rnd_adv_kl)
-                    vf_losses2 = tf.square(
-                        vpred_clipped - self.true_rewards_ph - self.agac_c_ph * pi_piadv_kl - self.agac_c_ph * pi_pi_rnd_adv_kl)
+                    if self.rnd_adv:
+                        vf_losses1 = tf.square(
+                            vpred - self.true_rewards_ph - self.agac_c_ph * pi_piadv_kl - self.agac_c_ph * pi_pi_rnd_adv_kl)
+                        vf_losses2 = tf.square(
+                            vpred_clipped - self.true_rewards_ph - self.agac_c_ph * pi_piadv_kl - self.agac_c_ph * pi_pi_rnd_adv_kl)
+                    else:
+                        vf_losses1 = tf.square(
+                            vpred - self.true_rewards_ph - self.agac_c_ph * pi_piadv_kl)
+                        vf_losses2 = tf.square(
+                            vpred_clipped - self.true_rewards_ph - self.agac_c_ph * pi_piadv_kl)
+
                     self.vf_loss = .5 * tf.reduce_mean(input_tensor=tf.maximum(vf_losses1, vf_losses2))
 
                     # Policy loss
                     ratio = tf.exp(self.old_pi_neglogpac_ph - neglogpac)
 
-                    agac_advs_ph = self.rewards_ph + self.agac_c_ph * tf.stop_gradient(
-                        (self.old_pi_adv_neglogpac - self.old_pi_neglogpac_ph - self.old_pi_rnd_adv_neglogpac)) - self.old_vpred_ph
+                    if self.rnd_adv:
+                        agac_advs_ph = self.rewards_ph + self.agac_c_ph * tf.stop_gradient(
+                            (self.old_pi_adv_neglogpac - self.old_pi_neglogpac_ph - self.old_pi_rnd_adv_neglogpac)) - self.old_vpred_ph
+                    else:
+                        agac_advs_ph = self.rewards_ph + self.agac_c_ph * tf.stop_gradient(
+                            (self.old_pi_adv_neglogpac - self.old_pi_neglogpac_ph)) - self.old_vpred_ph
                     mean_adv, var_adv = tf.nn.moments(x=agac_advs_ph, axes=0)
                     agac_advs_ph = (agac_advs_ph - mean_adv) / (tf.math.sqrt(var_adv) + 1e-8)
 
