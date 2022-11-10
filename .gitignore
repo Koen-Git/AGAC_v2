@@ -34,6 +34,7 @@ src/
 *.sublime-workspace
 
 logs/
+newLogs/
 _vizdoom.ini
 
 .ipynb_checkpoints

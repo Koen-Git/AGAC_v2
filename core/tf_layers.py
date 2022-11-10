@@ -153,7 +153,7 @@ def transformer(input_tensor, scope, kernel_dim):
         return tf.reshape(tf.keras.backend.dot(input_tensor, weight), (-1, kernel_dim))
 
 
-def lstm(input_tensor, mask_tensor, cell_state_hidden, scope, n_input, n_hidden, init_scale=1.0, layer_norm=False):
+def lstm(input_tensor, mask_tensor, cell_state_hidden, scope, n_hidden, init_scale=1.0, layer_norm=False):
     """
     Creates an Long Short Term Memory (LSTM) cell for TensorFlow
 
@@ -166,6 +166,7 @@ def lstm(input_tensor, mask_tensor, cell_state_hidden, scope, n_input, n_hidden,
     :param layer_norm: (bool) Whether to apply Layer Normalization or not
     :return: (TensorFlow Tensor) LSTM cell
     """
+    _, n_input = [v for v in input_tensor[0].get_shape()]
     with tf.compat.v1.variable_scope(scope):
         weight_x = tf.compat.v1.get_variable("wx", [n_input, n_hidden * 4], initializer=ortho_init(init_scale))
         weight_h = tf.compat.v1.get_variable("wh", [n_hidden, n_hidden * 4], initializer=ortho_init(init_scale))

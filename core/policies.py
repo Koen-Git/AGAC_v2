@@ -9,7 +9,8 @@ from gym.spaces import Discrete
 from core.distributions import make_proba_dist_type, CategoricalProbabilityDistribution, \
     MultiCategoricalProbabilityDistribution, DiagGaussianProbabilityDistribution, BernoulliProbabilityDistribution
 from core.input import observation_input
-from core.tf_layers import conv, linear, conv_to_fc
+from core.tf_layers import conv, linear, conv_to_fc, lstm
+from core.tf_util import batch_to_seq, seq_to_batch
 
 
 def cnn_extractor(scaled_images, **kwargs):
@@ -421,6 +422,156 @@ class FeedForwardPolicy(ActorCriticPolicy):
     def value(self, obs, state=None, mask=None):
         return self.sess.run(self.value_flat, {self.obs_ph: obs})
 
+class RecurrentActorCriticPolicy(ActorCriticPolicy):
+    """
+    Actor critic policy object uses a previous state in the computation for the current step.
+    NOTE: this class is not limited to recurrent neural network policies,
+    see https://github.com/hill-a/stable-baselines/issues/241
+
+    :param sess: (TensorFlow session) The current TensorFlow session
+    :param ob_space: (Gym Space) The observation space of the environment
+    :param ac_space: (Gym Space) The action space of the environment
+    :param n_env: (int) The number of environments to run
+    :param n_steps: (int) The number of steps to run for each environment
+    :param n_batch: (int) The number of batch to run (n_envs * n_steps)
+    :param state_shape: (tuple<int>) shape of the per-environment state space.
+    :param reuse: (bool) If the policy is reusable or not
+    :param scale: (bool) whether or not to scale the input
+    """
+
+    recurrent = True
+
+    def __init__(self, sess, ob_space, ac_space, n_env, n_steps, n_batch,
+                 state_shape, reuse=False, scale=False):
+        super(RecurrentActorCriticPolicy, self).__init__(sess, ob_space, ac_space, n_env, n_steps,
+                                                         n_batch, reuse=reuse, scale=scale)
+
+        with tf.compat.v1.variable_scope("input", reuse=False):
+            self._dones_ph = tf.compat.v1.placeholder(tf.float32, (n_batch, ), name="dones_ph")  # (done t-1)
+            state_ph_shape = (self.n_env, ) + tuple(state_shape)
+            self._states_ph = tf.compat.v1.placeholder(tf.float32, state_ph_shape, name="states_ph")
+
+        initial_state_shape = (self.n_env, ) + tuple(state_shape)
+        self._initial_state = np.zeros(initial_state_shape, dtype=np.float32)
+
+    @property
+    def initial_state(self):
+        return self._initial_state
+
+    @property
+    def dones_ph(self):
+        """tf.Tensor: placeholder for whether episode has terminated (done), shape (self.n_batch, ).
+        Internally used to reset the state before the next episode starts."""
+        return self._dones_ph
+
+    @property
+    def states_ph(self):
+        """tf.Tensor: placeholder for states, shape (self.n_env, ) + state_shape."""
+        return self._states_ph
+
+    @abstractmethod
+    def value(self, obs, state=None, mask=None):
+        """
+        Cf base class doc.
+        """
+        raise NotImplementedError
+
+
+class LstmPolicy(RecurrentActorCriticPolicy):
+    """
+    Policy object that implements actor critic, using LSTMs.
+
+    :param sess: (TensorFlow session) The current TensorFlow session
+    :param ob_space: (Gym Space) The observation space of the environment
+    :param ac_space: (Gym Space) The action space of the environment
+    :param n_env: (int) The number of environments to run
+    :param n_steps: (int) The number of steps to run for each environment
+    :param n_batch: (int) The number of batch to run (n_envs * n_steps)
+    :param n_lstm: (int) The number of LSTM cells (for recurrent policies)
+    :param reuse: (bool) If the policy is reusable or not
+    :param layers: ([int]) The size of the Neural network before the LSTM layer  (if None, default to [64, 64])
+    :param net_arch: (list) Specification of the actor-critic policy network architecture. Notation similar to the
+        format described in mlp_extractor but with additional support for a 'lstm' entry in the shared network part.
+    :param act_fun: (tf.func) the activation function to use in the neural network.
+    :param cnn_extractor: (function (TensorFlow Tensor, ``**kwargs``): (TensorFlow Tensor)) the CNN feature extraction
+    :param layer_norm: (bool) Whether or not to use layer normalizing LSTMs
+    :param feature_extraction: (str) The feature extraction type ("cnn" or "mlp")
+    :param kwargs: (dict) Extra keyword arguments for the nature CNN feature extraction
+    """
+
+    recurrent = True
+
+    def __init__(self, sess, ob_space, ac_space, n_env, n_steps, n_batch, n_lstm=256, reuse=False, layers=None,
+                 net_arch=None, act_fun=tf.tanh, layer_norm=False, feature_extraction="cnn",
+                 **kwargs):
+        # state_shape = [n_lstm * 2] dim because of the cell and hidden states of the LSTM
+        super(LstmPolicy, self).__init__(sess, ob_space, ac_space, n_env, n_steps, n_batch,
+                                         state_shape=(2 * n_lstm, ), reuse=reuse,
+                                         scale=(feature_extraction == "cnn"))
+
+        self._kwargs_check(feature_extraction, kwargs)
+
+        if net_arch is None:  # Legacy mode
+            if layers is None:
+                layers = [64, 64]
+            else:
+                warnings.warn("The layers parameter is deprecated. Use the net_arch parameter instead.")
+
+            with tf.compat.v1.variable_scope("model", reuse=reuse):
+                if feature_extraction == "cnn" and self.pdtype.probability_distribution_class() == CategoricalProbabilityDistribution:
+                    pi_latent, vf_latent, pi_adv_latent = cnn_extractor(self.processed_obs, **kwargs)
+
+                    masks = batch_to_seq(self.dones_ph, self.n_env, n_steps)
+
+                    input_sequence_pi = batch_to_seq(pi_latent, self.n_env, n_steps)
+                    input_sequence_vf = batch_to_seq(vf_latent, self.n_env, n_steps)
+                    input_sequence_pi_adv = batch_to_seq(pi_adv_latent, self.n_env, n_steps)
+
+                    rnn_output_pi, self.snew = lstm(input_sequence_pi, masks, self.states_ph, 'lstm1_pi', n_hidden=n_lstm,
+                                             layer_norm=layer_norm)
+                    rnn_output_pi = seq_to_batch(rnn_output_pi)
+
+                    rnn_output_vf, self.snew = lstm(input_sequence_vf, masks, self.states_ph, 'lstm1_vf', n_hidden=n_lstm,
+                                        layer_norm=layer_norm)
+                    rnn_output_vf = seq_to_batch(rnn_output_vf)
+
+                    rnn_output_pi_adv, self.snew = lstm(input_sequence_pi_adv, masks, self.states_ph, 'lstm1_pi_adv', n_hidden=n_lstm,
+                                                layer_norm=layer_norm)
+                    rnn_output_pi_adv = seq_to_batch(rnn_output_pi_adv)
+
+                    pi_adv_latent_2 = tf.nn.elu(linear(rnn_output_pi_adv, 'pi_adv_latent', n_hidden=128, init_scale=np.sqrt(2)))
+                    self.pi_adv_logits = linear(pi_adv_latent_2, 'pi_adv_latent_2', ac_space.n,
+                                                            init_scale=0.01, init_bias=0.0)
+                else:
+                    raise NotImplementedError
+
+                value_fn = linear(rnn_output_vf, 'vf', 1)
+
+                # self._proba_distribution, self._policy, self.q_value = \
+                #     self.pdtype.proba_distribution_from_latent(rnn_output, rnn_output)
+                self._proba_distribution, self._policy = \
+                    self.pdtype.proba_distribution_from_latent(rnn_output_pi, vf_latent, init_scale=0.01)
+
+            self._value_fn = value_fn
+
+        self._setup_init()
+
+    def step(self, obs, state=None, mask=None, deterministic=False):
+        if deterministic:
+            action, value, neglogp = self.sess.run([self.deterministic_action, self.value_flat, self.neglogp],
+                                                   {self.obs_ph: obs, self.states_ph: state, self.dones_ph: mask})
+        else:
+            action, value, neglogp, pi_proba, pi_adv_logits = self.sess.run(
+                [self.action, self.value_flat, self.neglogp, self.policy_proba, self.pi_adv_logits],
+                {self.obs_ph: obs, self.states_ph: state, self.dones_ph: mask})
+        return action, value, self.initial_state, neglogp, pi_proba, pi_adv_logits
+
+    def proba_step(self, obs, state=None, mask=None):
+        return self.sess.run(self.policy_proba, {self.obs_ph: obs, self.states_ph: state, self.dones_ph: mask})
+
+    def value(self, obs, state=None, mask=None):
+        return self.sess.run(self.value_flat, {self.obs_ph: obs, self.states_ph: state, self.dones_ph: mask})
+
 
 class CnnPolicy(FeedForwardPolicy):
     """
@@ -459,11 +610,31 @@ class MlpPolicy(FeedForwardPolicy):
         super(MlpPolicy, self).__init__(sess, ob_space, ac_space, n_env, n_steps, n_batch, reuse,
                                         feature_extraction="mlp", **_kwargs)
 
+class CnnLstmPolicy(LstmPolicy):
+    """
+    Policy object that implements actor critic, using LSTMs with a CNN feature extraction
+
+    :param sess: (TensorFlow session) The current TensorFlow session
+    :param ob_space: (Gym Space) The observation space of the environment
+    :param ac_space: (Gym Space) The action space of the environment
+    :param n_env: (int) The number of environments to run
+    :param n_steps: (int) The number of steps to run for each environment
+    :param n_batch: (int) The number of batch to run (n_envs * n_steps)
+    :param n_lstm: (int) The number of LSTM cells (for recurrent policies)
+    :param reuse: (bool) If the policy is reusable or not
+    :param kwargs: (dict) Extra keyword arguments for the nature CNN feature extraction
+    """
+
+    def __init__(self, sess, ob_space, ac_space, n_env, n_steps, n_batch, n_lstm=256, reuse=False, **_kwargs):
+        super(CnnLstmPolicy, self).__init__(sess, ob_space, ac_space, n_env, n_steps, n_batch, n_lstm, reuse,
+                                            layer_norm=False, feature_extraction="cnn", **_kwargs)
+
 
 _policy_registry = {
     ActorCriticPolicy: {
         "CnnPolicy": CnnPolicy,
         "MlpPolicy": MlpPolicy,
+        "CnnLstmPolicy": CnnLstmPolicy,
     }
 }
 

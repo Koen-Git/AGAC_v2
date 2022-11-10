@@ -7,7 +7,7 @@ import tensorflow as tf
 from core import logger, tf_util
 from core.base_class import ActorCriticRLModel, SetVerbosity, TensorboardWriter
 from core.math_util import safe_mean, explained_variance
-from core.policies import ActorCriticPolicy
+from core.policies import ActorCriticPolicy, RecurrentActorCriticPolicy
 from core.runners import AbstractEnvRunner
 from core.tf_util import total_episode_reward_logger, linear_schedule, get_schedule_fn
 from core.cmd_util import swap_and_flatten
@@ -96,6 +96,11 @@ class AGAC(ActorCriticRLModel):
 
                 n_batch_step = None
                 n_batch_train = None
+                if issubclass(self.policy, RecurrentActorCriticPolicy):
+                    assert self.n_envs % self.nminibatches == 0, "For recurrent policies, "\
+                        "the number of environments run in parallel should be a multiple of nminibatches."
+                    n_batch_step = self.n_envs
+                    n_batch_train = self.n_batch // self.nminibatches
 
                 act_model = self.policy(self.sess, self.observation_space, self.action_space, self.n_envs, 1,
                                         n_batch_step, reuse=False, **self.policy_kwargs)
@@ -438,9 +443,11 @@ class AGAC(ActorCriticRLModel):
                             end = start + envs_per_batch
                             mb_env_inds = env_indices[start:end]
                             mb_flat_inds = flat_indices[mb_env_inds].ravel()
-                            slices = (arr[mb_flat_inds] for arr in (obs, returns, masks, actions, values, neglogpacs))
+                            slices = (arr[mb_flat_inds] for arr in (
+                                obs, returns, true_returns, masks, actions, values, neglogpacs, pi_probas,
+                                pi_adv_logits, pi_rnd_adv_logits))
                             mb_states = states[mb_env_inds]
-                            mb_loss_vals.append(self._train_step(lr_now, cliprange_now, *slices, update=timestep,
+                            mb_loss_vals.append(self._train_step(lr_now, agac_c_now, cliprange_now, *slices, update=timestep,
                                                                  writer=writer, states=mb_states,
                                                                  cliprange_vf=cliprange_vf_now))
 
