@@ -18,7 +18,7 @@ class AGAC(ActorCriticRLModel):
                  vf_coef=0.5, max_grad_norm=0.5, lam=0.95, nminibatches=4, noptepochs=4, cliprange=0.2,
                  agac_c=0.01, beta_adv=0.1, episodic_count=True,
                  verbose=0, tensorboard_log=None, full_tensorboard_log=False, _init_setup_model=True,
-                 policy_kwargs=None, seed=None, n_cpu_tf_sess=None, rnd_adv=False, rnd_noise=False, add_noise=False):
+                 policy_kwargs=None, seed=None, n_cpu_tf_sess=None, rnd_adv=False, add_noise_old=False, add_noise_scaled=False, add_noise_normal=False):
 
         self.learning_rate = learning_rate
         self.cliprange = cliprange
@@ -36,8 +36,9 @@ class AGAC(ActorCriticRLModel):
         self.full_tensorboard_log = full_tensorboard_log
         self.episodic_count = episodic_count
         self.rnd_adv = rnd_adv
-        self.rnd_noise = rnd_noise
-        self.add_noise = add_noise
+        self.add_noise_old = add_noise_old
+        self.add_noise_scaled = add_noise_scaled
+        self.add_noise_normal = add_noise_normal
 
         self.action_ph = None
         self.advs_ph = None
@@ -395,14 +396,29 @@ class AGAC(ActorCriticRLModel):
                 obs, returns, true_returns, masks, actions, values, neglogpacs, pi_probas, pi_adv_logits, states, ep_infos, undiscounted_reward = rollout
                 pi_rnd_adv_logits = np.random.uniform(size=pi_adv_logits.shape)
 
-                if self.rnd_noise:
+                if self.add_noise_old:
                     noise = np.random.uniform(-0.001, 0.001, size=pi_adv_logits.shape)
-                    if self.add_noise:
-                        print("add noise")
-                        pi_adv_logits += noise
-                    else:
-                        print("replace noise")
-                        pi_adv_logits = noise
+                    print("add noise")
+                    pi_adv_logits += noise
+                elif self.add_noise_scaled:
+                    noise = np.random.uniform(-0.001, 0.001, size=pi_adv_logits.shape)
+                    print("add noise scaled")
+                    pi_adv_logits += noise * pi_adv_logits
+                elif self.add_noise_normal:
+                    mean, std = np.mean(pi_adv_logits), np.std(pi_adv_logits)
+                    print(mean, std)
+                    noise = np.random.normal(mean, std, size=pi_adv_logits.shape)
+                    print("add noise normal")
+                    pi_adv_logits += noise
+
+                # if self.rnd_noise:
+                #     noise = np.random.uniform(-0.001, 0.001, size=pi_adv_logits.shape)
+                #     if self.add_noise:
+                #         print("add noise")
+                #         pi_adv_logits += noise
+                #     else:
+                #         print("replace noise")
+                #         pi_adv_logits = noise
 
                 callback.on_rollout_end()
 

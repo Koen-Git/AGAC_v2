@@ -11,12 +11,13 @@ def run_minigrid(
     num_timesteps: int,
     seed: int,
     rnd_adv: bool,
-    rnd_noise: bool,
-    add_noise: bool,
+    add_noise_old: bool,
+    add_noise_scaled: bool,
+    add_noise_normal: bool,
     policy: str = "CnnPolicy",
     log_prefix: str = ""
 ):
-    log_dir = "./logs/%s/AGAC_seed%s/%snoise%s_add%s" % (env_id, seed, log_prefix, rnd_noise, add_noise)
+    log_dir = "./logs/%s/AGAC_seed%s/%sold%s_scaled%s_normal%s" % (env_id, seed, log_prefix, add_noise_old, add_noise_scaled, add_noise_normal)
     os.makedirs(log_dir, exist_ok=True)
     model_dir = "./models/AGAG/%s" % (env_id)
     os.makedirs(model_dir, exist_ok=True)
@@ -27,6 +28,7 @@ def run_minigrid(
 
     model = AGAC(policy, env, verbose=1, seed=seed, vf_coef=0.5, tensorboard_log=log_dir,
                      n_steps=n_steps, nminibatches=1, agac_c=linear_schedule(0.0004), beta_adv=0.00004,
-                     learning_rate=0.0003, ent_coef=0.01, cliprange=0.2, rnd_adv=rnd_adv, rnd_noise=rnd_noise, add_noise=add_noise)
+                     learning_rate=0.0003, ent_coef=0.01, cliprange=0.2, rnd_adv=rnd_adv, add_noise_old=add_noise_old,
+                     add_noise_scaled=add_noise_scaled, add_noise_normal=add_noise_normal)
     # model = model.load("./models/AGAG/MiniGrid-ObstructedMaze-Full-v0/ts_150001664.zip", env=env)
     model.learn(total_timesteps=num_timesteps, tb_log_name="tb/AGAC", save_interval=10000000, model_save_path=model_dir)
