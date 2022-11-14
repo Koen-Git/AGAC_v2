@@ -16,7 +16,7 @@ from core.vec_env import DummyVecEnv, SubprocVecEnv, VecFrameStack
 cv2.ocl.setUseOpenCL(False)
 
 
-def make_vec_env(env_id, n_envs=1, seed=None, start_index=0,
+def make_vec_env(env_id, n_envs=1, seed=None, start_index=0, n_stack=4,
                  monitor_dir=None, wrapper_class=None,
                  env_kwargs=None, vec_env_cls=None, vec_env_kwargs=None):
     """
@@ -72,7 +72,7 @@ def make_vec_env(env_id, n_envs=1, seed=None, start_index=0,
         vec_env_cls = DummyVecEnv
 
     return VecFrameStack(venv=DummyVecEnv([make_env(i + start_index) for i in range(n_envs)], **vec_env_kwargs),
-                         n_stack=4)
+                         n_stack=n_stack)
 
 
 def make_bullet_env(env_id, n_envs=1, seed=None, start_index=0,

@@ -11,6 +11,7 @@ parser.add_argument('--env', type=str, default=default_env, help='Gym environmen
 parser.add_argument('--timesteps', default=200000000, type=int, help='Number of timesteps to run.')
 parser.add_argument('--seed', default=default_seed, type=int, help='Random seed (default: 4949).')
 parser.add_argument('--policy', default="CnnPolicy", type=str, help='Use random adv.', choices=["CnnPolicy", "CnnLstmPolicy"])
+parser.add_argument('--n_frame_stack', default=4, type=int, help='Amount of stacked frames.')
 parser.add_argument('--rnd_adv', default=False, type=bool, help='Add Random adversary (default: False).')
 parser.add_argument('--add_noise_old', default=False, type=bool, help='Add noise (default: False).')
 parser.add_argument('--add_noise_normal', default=False, type=bool, help='Add noise with normal dist (default: False).')
@@ -24,6 +25,7 @@ if __name__ == '__main__':
         num_timesteps=args.timesteps, 
         seed=args.seed, 
         policy=args.policy,
+        n_frame_stack=args.n_frame_stack,
         rnd_adv=args.rnd_adv,
         add_noise_old=args.add_noise_old,
         add_noise_normal=args.add_noise_normal,

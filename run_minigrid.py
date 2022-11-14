@@ -13,17 +13,18 @@ def run_minigrid(
     rnd_adv: bool,
     add_noise_old: bool,
     add_noise_normal: bool,
+    n_frame_stack: int = 4,
     policy: str = "CnnPolicy",
     log_prefix: str = ""
 ):
-    log_dir = "./logs/%s/AGAC_seed%s/%sold%s_normal%s" % (env_id, seed, log_prefix, add_noise_old, add_noise_normal)
+    log_dir = "./logs/%s/AGAC_seed%s/%s_old%s_normal%s" % (env_id, seed, log_prefix, add_noise_old, add_noise_normal)
     os.makedirs(log_dir, exist_ok=True)
-    model_dir = "./models/AGAG/%s" % (env_id)
+    model_dir = "./models/AGAG/%s_%s_%s" % (env_id, log_prefix, seed)
     os.makedirs(model_dir, exist_ok=True)
     n_steps = 2048
     if policy == "CnnLstmPolicy": n_steps = 256
     print(n_steps)
-    env = make_vec_env(env_id, 1, seed, monitor_dir=log_dir, wrapper_class=ImgObsWrapper)
+    env = make_vec_env(env_id, 1, seed, n_stack=n_frame_stack, monitor_dir=log_dir, wrapper_class=ImgObsWrapper)
 
     model = AGAC(policy, env, verbose=1, seed=seed, vf_coef=0.5, tensorboard_log=log_dir,
                      n_steps=n_steps, nminibatches=1, agac_c=linear_schedule(0.0004), beta_adv=0.00004,
