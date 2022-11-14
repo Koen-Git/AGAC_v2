@@ -13,7 +13,6 @@ parser.add_argument('--seed', default=default_seed, type=int, help='Random seed 
 parser.add_argument('--policy', default="CnnPolicy", type=str, help='Use random adv.', choices=["CnnPolicy", "CnnLstmPolicy"])
 parser.add_argument('--rnd_adv', default=False, type=bool, help='Add Random adversary (default: False).')
 parser.add_argument('--add_noise_old', default=False, type=bool, help='Add noise (default: False).')
-parser.add_argument('--add_noise_scaled', default=False, type=bool, help='Add noise scaled by initial (default: False).')
 parser.add_argument('--add_noise_normal', default=False, type=bool, help='Add noise with normal dist (default: False).')
 parser.add_argument('--log_prefix', default="", type=str, help='Log prefix (default: "").')
 
@@ -26,10 +25,7 @@ if __name__ == '__main__':
         seed=args.seed, 
         policy=args.policy,
         rnd_adv=args.rnd_adv,
-        # rnd_noise=args.rnd_noise,
-        # add_noise=args.add_noise,
         add_noise_old=args.add_noise_old,
-        add_noise_scaled=args.add_noise_scaled,
         add_noise_normal=args.add_noise_normal,
         log_prefix=args.log_prefix
     )
